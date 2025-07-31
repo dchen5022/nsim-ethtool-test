@@ -7,6 +7,27 @@
 
 #include "netdevsim.h"
 
+struct nsim_stat_desc {
+        char desc[ETH_GSTRING_LEN];
+        size_t offset;
+};
+
+#define NSIM_STAT_ENTRY(s) {\
+	.desc = #s, \
+	.offset = offsetof(struct nsim_ethtool_stats, s) \
+}
+
+static const struct nsim_stat_desc nsim_stats_desc[] = {
+	NSIM_STAT_ENTRY(tx_packets),
+	NSIM_STAT_ENTRY(tx_bytes),
+	NSIM_STAT_ENTRY(tx_dropped),
+	NSIM_STAT_ENTRY(rx_packets),
+	NSIM_STAT_ENTRY(rx_bytes),
+	NSIM_STAT_ENTRY(rx_dropped),
+};
+
+#define NSIM_STATS_LEN	ARRAY_SIZE(nsim_stats_desc)
+
 static void
 nsim_get_pause_stats(struct net_device *dev,
 		     struct ethtool_pause_stats *pause_stats)
@@ -182,6 +203,75 @@ static int nsim_get_ts_info(struct net_device *dev,
 	return 0;
 }
 
+static int nsim_sset_count(struct net_device *dev, int sset)
+{
+        switch (sset) {
+        case ETH_SS_STATS:
+                return NSIM_STATS_LEN;
+        default:
+                return -EOPNOTSUPP;
+        }
+}
+
+static void nsim_get_strings(struct net_device *dev, u32 sset, u8 *data)
+{
+        int i;
+
+        switch (sset) {
+        case ETH_SS_STATS:
+                for (i = 0; i < NSIM_STATS_LEN; i++)
+                        ethtool_puts(&data, nsim_stats_desc[i].desc);
+                break;
+        }
+}
+
+static void nsim_get_ethtool_stats(struct net_device *dev,
+                                   struct ethtool_stats *stats,
+                                   u64 *data)
+{
+        struct netdevsim *ns = netdev_priv(dev);
+        unsigned int start, i;
+        const u8 *stats_base;
+        const u64_stats_t *p;
+        size_t offset;
+
+        stats_base = (const u8 *)&ns->ethtool.stats;
+
+        do {
+                start = u64_stats_fetch_begin(&ns->ethtool.stats.syncp);
+                for (i = 0; i < NSIM_STATS_LEN; i++) {
+                        offset = nsim_stats_desc[i].offset;
+
+                        p = (const u64_stats_t *)(stats_base + offset);
+                        data[i] = u64_stats_read(p);
+                }
+        } while (u64_stats_fetch_retry(&ns->ethtool.stats.syncp, start));
+}
+
+#define NSIM_DEV_ETHTOOL_STATS_TRAFFIC_MS	100
+
+static void nsim_dev_ethtool_stats_traffic_bump(struct nsim_ethtool_stats *stats) {
+	if (stats->enabled) {
+		stats->tx_packets += 1;
+		stats->tx_bytes += 1;
+		stats->tx_dropped += 1;
+		stats->rx_packets += 1;
+		stats->rx_bytes += 1;
+		stats->rx_dropped += 1;
+	}
+}
+
+static void nsim_dev_ethtool_stats_traffic_work(struct work_struct *work)
+{
+	struct nsim_ethtool_stats *stats;
+
+	stats = container_of(work, struct nsim_ethtool_stats, traffic_dw.work);
+	nsim_dev_ethtool_stats_traffic_bump(stats);
+
+	schedule_delayed_work(&stats->traffic_dw,
+			      msecs_to_jiffies(NSIM_DEV_ETHTOOL_STATS_TRAFFIC_MS));
+}
+
 static const struct ethtool_ops nsim_ethtool_ops = {
 	.supported_coalesce_params	= ETHTOOL_COALESCE_ALL_PARAMS,
 	.supported_ring_params		= ETHTOOL_RING_USE_TCP_DATA_SPLIT |
@@ -199,6 +289,9 @@ static const struct ethtool_ops nsim_ethtool_ops = {
 	.set_fecparam			= nsim_set_fecparam,
 	.get_fec_stats			= nsim_get_fec_stats,
 	.get_ts_info			= nsim_get_ts_info,
+	.get_sset_count                 = nsim_sset_count,
+        .get_strings                    = nsim_get_strings,
+        .get_ethtool_stats              = nsim_get_ethtool_stats,
 };
 
 static void nsim_ethtool_ring_init(struct netdevsim *ns)
@@ -247,4 +340,12 @@ void nsim_ethtool_init(struct netdevsim *ns)
 			   &ns->ethtool.ring.rx_mini_max_pending);
 	debugfs_create_u32("tx_max_pending", 0600, dir,
 			   &ns->ethtool.ring.tx_max_pending);
+
+	dir = debugfs_create_dir("stats", ethtool);
+	debugfs_create_bool("enabled", 0600, dir, &ns->ethtool.stats.enabled);
+
+	INIT_DELAYED_WORK(&ns->ethtool.stats.traffic_dw,
+			  &nsim_dev_ethtool_stats_traffic_work);
+	schedule_delayed_work(&ns->ethtool.stats.traffic_dw,
+			      msecs_to_jiffies(NSIM_DEV_ETHTOOL_STATS_TRAFFIC_MS));
 }

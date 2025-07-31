@@ -27,17 +27,17 @@
 #include <net/xdp.h>
 #include <net/macsec.h>
 
-#define DRV_NAME	"netdevsim"
+#define DRV_NAME "netdevsim"
 
-#define NSIM_XDP_MAX_MTU	4000
+#define NSIM_XDP_MAX_MTU 4000
 
-#define NSIM_EA(extack, msg)	NL_SET_ERR_MSG_MOD((extack), msg)
+#define NSIM_EA(extack, msg) NL_SET_ERR_MSG_MOD((extack), msg)
 
-#define NSIM_IPSEC_MAX_SA_COUNT		33
-#define NSIM_IPSEC_VALID		BIT(31)
-#define NSIM_UDP_TUNNEL_N_PORTS		4
+#define NSIM_IPSEC_MAX_SA_COUNT 33
+#define NSIM_IPSEC_VALID BIT(31)
+#define NSIM_UDP_TUNNEL_N_PORTS 4
 
-#define NSIM_HDS_THRESHOLD_MAX		1024
+#define NSIM_HDS_THRESHOLD_MAX 1024
 
 struct nsim_sa {
 	struct xfrm_state *xs;
@@ -82,6 +82,18 @@ struct nsim_ethtool_pauseparam {
 	bool report_stats_tx;
 };
 
+struct nsim_ethtool_stats {
+	u64 tx_packets;
+	u64 tx_bytes;
+	u64 tx_dropped;
+	u64 rx_packets;
+	u64 rx_bytes;
+	u64 rx_dropped;
+	struct u64_stats_sync syncp;
+	struct delayed_work traffic_dw;
+	bool enabled;
+};
+
 struct nsim_ethtool {
 	u32 get_err;
 	u32 set_err;
@@ -90,6 +102,7 @@ struct nsim_ethtool {
 	struct ethtool_coalesce coalesce;
 	struct ethtool_ringparam ring;
 	struct ethtool_fecparam fec;
+	struct nsim_ethtool_stats stats;
 };
 
 struct nsim_rq {
@@ -110,7 +123,7 @@ struct netdevsim {
 
 	struct nsim_bus_dev *nsim_bus_dev;
 
-	struct bpf_prog	*bpf_offloaded;
+	struct bpf_prog *bpf_offloaded;
 	u32 bpf_offloaded_id;
 
 	struct xdp_attachment_info xdp;
@@ -163,8 +176,8 @@ int nsim_bpf_init(struct netdevsim *ns);
 void nsim_bpf_uninit(struct netdevsim *ns);
 int nsim_bpf(struct net_device *dev, struct netdev_bpf *bpf);
 int nsim_bpf_disable_tc(struct netdevsim *ns);
-int nsim_bpf_setup_tc_block_cb(enum tc_setup_type type,
-			       void *type_data, void *cb_priv);
+int nsim_bpf_setup_tc_block_cb(enum tc_setup_type type, void *type_data,
+			       void *cb_priv);
 #else
 
 static inline int nsim_bpf_dev_init(struct nsim_dev *nsim_dev)
@@ -194,16 +207,15 @@ static inline int nsim_bpf_disable_tc(struct netdevsim *ns)
 	return 0;
 }
 
-static inline int
-nsim_bpf_setup_tc_block_cb(enum tc_setup_type type, void *type_data,
-			   void *cb_priv)
+static inline int nsim_bpf_setup_tc_block_cb(enum tc_setup_type type,
+					     void *type_data, void *cb_priv)
 {
 	return -EOPNOTSUPP;
 }
 #endif
 
 enum nsim_resource_id {
-	NSIM_RESOURCE_NONE,   /* DEVLINK_RESOURCE_ID_PARENT_TOP */
+	NSIM_RESOURCE_NONE, /* DEVLINK_RESOURCE_ID_PARENT_TOP */
 	NSIM_RESOURCE_IPV4,
 	NSIM_RESOURCE_IPV4_FIB,
 	NSIM_RESOURCE_IPV4_FIB_RULES,
@@ -367,8 +379,7 @@ int nsim_drv_port_add(struct nsim_bus_dev *nsim_bus_dev,
 		      enum nsim_dev_port_type type, unsigned int port_index,
 		      u8 perm_addr[ETH_ALEN]);
 int nsim_drv_port_del(struct nsim_bus_dev *nsim_bus_dev,
-		      enum nsim_dev_port_type type,
-		      unsigned int port_index);
+		      enum nsim_dev_port_type type, unsigned int port_index);
 int nsim_drv_configure_vfs(struct nsim_bus_dev *nsim_bus_dev,
 			   unsigned int num_vfs);
 
